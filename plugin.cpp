@@ -14,30 +14,6 @@
 
 #include "clap/clap.h"
 
-//////////////////////////////////////////////////////////////////////////////
-// Plugin descriptor
-//////////////////////////////////////////////////////////////////////////////
-
-static const clap_plugin_descriptor_t plugin_descriptor = {
-
-    .clap_version = CLAP_VERSION_INIT,
-    .id           = "nakst.HelloCLAP",
-    .name         = "HelloCLAP",
-    .vendor       = "nakst",
-    .url          = "https://nakst.gitlab.io",
-    .manual_url   = "https://nakst.gitlab.io",
-    .support_url  = "https://nakst.gitlab.io",
-    .version      = "1.0.0",
-    .description  = "The best audio plugin ever.",
-
-    .features = (const char*[]){
-		CLAP_PLUGIN_FEATURE_INSTRUMENT, CLAP_PLUGIN_FEATURE_SYNTHESIZER,
-		CLAP_PLUGIN_FEATURE_STEREO, NULL,
-    },
-};
-
-//////////////////////////////////////////////////////////////////////////////
-
 struct Voice {
 	bool held       = false;
 	int32_t note_id = 0;
@@ -124,6 +100,28 @@ static void render_audio(MyPlugin* plugin, uint32_t start, uint32_t end,
 		out_right[index] = sum;
 	}
 }
+
+//////////////////////////////////////////////////////////////////////////////
+// Plugin descriptor
+//////////////////////////////////////////////////////////////////////////////
+
+static const clap_plugin_descriptor_t plugin_descriptor = {
+
+    .clap_version = CLAP_VERSION_INIT,
+    .id           = "nakst.HelloCLAP",
+    .name         = "HelloCLAP",
+    .vendor       = "nakst",
+    .url          = "https://nakst.gitlab.io",
+    .manual_url   = "https://nakst.gitlab.io",
+    .support_url  = "https://nakst.gitlab.io",
+    .version      = "1.0.0",
+    .description  = "The best audio plugin ever.",
+
+    .features = (const char*[]){
+		CLAP_PLUGIN_FEATURE_INSTRUMENT, CLAP_PLUGIN_FEATURE_SYNTHESIZER,
+		CLAP_PLUGIN_FEATURE_STEREO, NULL,
+    },
+};
 
 //////////////////////////////////////////////////////////////////////////////
 // Extensions
