@@ -1,0 +1,39 @@
+# Precompiled Headers
+*.gch
+*.pch
+
+# Visual Studio / Code
+.vs
+.vscode
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# IntelliJ
+.idea
+*.iml
+
+# Local History for Visual Studio Code
+.history/
+
+# GNU Global tags, used by some VSCode/Codium plugins
+GPATH
+GRTAGS
+GTAGS
+
+# Common editor temp/backup files
+*~
+*.swp
+*.tmp
+*.orig
+*.rej
+
+# macOS directory prefs
+.DS_Store
+
+# clangd language server
+.clangd
+.cache
+compile_commands.json
