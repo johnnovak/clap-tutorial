@@ -15,9 +15,9 @@
 # Use space for indenting continuations (lining up long statements broken
 # into several lines.
 #
-UseTab: ForIndentation
-TabWidth: 8
-IndentWidth: 8
+UseTab: Never
+TabWidth: 4
+IndentWidth: 4
 ContinuationIndentWidth: 4
 
 ColumnLimit: 80
