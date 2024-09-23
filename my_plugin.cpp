@@ -1,6 +1,8 @@
 // CLAP instrument plugin tutorial
 //
-// Adapted from: https://nakst.gitlab.io/tutorial/clap-part-1.html
+// Adapted from:
+//   https://nakst.gitlab.io/tutorial/clap-part-1.html
+//   https://nakst.gitlab.io/tutorial/clap-part-2.html
 //
 // Adjusted for C++20 by John Novak <john@johnnovak.net>
 // https://github.com/johnnovak/
@@ -12,10 +14,12 @@
 
 #include "my_plugin.h"
 
-MyPlugin::MyPlugin(const clap_plugin_t _plugin_class, const clap_host_t* _host)
+MyPlugin::MyPlugin(const clap_plugin_t _plugin_class, const clap_host_t* _host,
+                   const Waveform _waveform)
 {
     plugin_class = _plugin_class;
     host         = _host;
+    waveform     = _waveform;
 
     plugin_class.plugin_data = this;
 }
@@ -101,11 +105,13 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
 
         if (!voice->held) {
             clap_event_note_t event = {
-                .header     = {.size     = sizeof(event),
-                               .time     = 0,
-                               .space_id = CLAP_CORE_EVENT_SPACE_ID,
-                               .type     = CLAP_EVENT_NOTE_END,
-                               .flags    = 0},
+                .header = {
+                    .size     = sizeof(event),
+                    .time     = 0,
+                    .space_id = CLAP_CORE_EVENT_SPACE_ID,
+                    .type     = CLAP_EVENT_NOTE_END,
+                    .flags    = 0
+                },
                 .key        = voice->key,
                 .note_id    = voice->note_id,
                 .channel    = voice->channel,
@@ -307,8 +313,22 @@ void MyPlugin::ProcessEvent(const clap_event_header_t* event)
     }
 }
 
-void MyPlugin::RenderAudio(const uint32_t start, const uint32_t end, float* out_left,
-                           float* out_right)
+static float triangle(const float x)
+{
+    // amplitude
+    constexpr auto A = 2.0f;
+
+    // period
+    constexpr auto P = 1.0f * M_PI;
+
+    constexpr auto AmplitudeOffset = A / 2.0f;
+    constexpr auto PhaseOffset     = P / -2.0f;
+
+    return (A / P) * (P - fabs(fmod(x - PhaseOffset, 2.0f * P) - P)) - AmplitudeOffset;
+}
+
+void MyPlugin::RenderAudio(const uint32_t start, const uint32_t end,
+                           float* out_left, float* out_right)
 {
     for (uint32_t index = start; index < end; ++index) {
         auto sum = 0.0f;
@@ -324,8 +344,17 @@ void MyPlugin::RenderAudio(const uint32_t start, const uint32_t end, float* out_
                                            0.0f,
                                            1.0f);
 
-            constexpr auto Pi = 3.14159f;
-            sum += sinf(voice->phase * 2.0f * Pi) * 0.2f * volume;
+            switch (waveform) {
+            case Waveform::Sine:
+                sum += sinf(voice->phase * 2.0f * M_PI) * 0.2f * volume;
+                break;
+
+            case Waveform::Triangle:
+                sum += triangle(voice->phase * 2.0f * M_PI) * 0.2f * volume;
+                break;
+
+            default: assert(false);
+            }
 
             voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) / sample_rate;
             voice->phase -= floorf(voice->phase);

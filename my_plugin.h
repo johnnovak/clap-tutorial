@@ -1,6 +1,10 @@
+#pragma once
+
 // CLAP instrument plugin tutorial
 //
-// Adapted from: https://nakst.gitlab.io/tutorial/clap-part-1.html
+// Adapted from:
+//   https://nakst.gitlab.io/tutorial/clap-part-1.html
+//   https://nakst.gitlab.io/tutorial/clap-part-2.html
 //
 // Adjusted for C++20 by John Novak <john@johnnovak.net>
 // https://github.com/johnnovak/
@@ -14,14 +18,19 @@
 class MyPlugin {
 
 public:
+	enum Waveform { Sine, Triangle };
+
+public:
     // Init/shutdown
-    MyPlugin(const clap_plugin_t _plugin_class, const clap_host_t* _host);
+    MyPlugin(const clap_plugin_t plugin_class, const clap_host_t* host,
+             const Waveform waveform);
+
     const clap_plugin_t* GetPluginClass();
 
-    bool Init(const clap_plugin* _plugin_instance);
+    bool Init(const clap_plugin* plugin_instance);
     void Shutdown();
 
-    bool Activate(const double _sample_rate, const uint32_t min_frame_count,
+    bool Activate(const double sample_rate, const uint32_t min_frame_count,
                   const uint32_t max_frame_count);
 
     // Processing
@@ -71,6 +80,8 @@ private:
     const clap_plugin* plugin_instance = nullptr;
 
     float sample_rate = 48'000.0f;
+
+	Waveform waveform = {};
 
     std::vector<Voice> voices = {};
 
