@@ -1,6 +1,6 @@
 // CLAP instrument plugin tutorial
 //
-// Slightly adapted from: https://nakst.gitlab.io/tutorial/clap-part-1.html
+// Adapted from: https://nakst.gitlab.io/tutorial/clap-part-1.html
 //
 // Adjusted for C++20 by John Novak <john@johnnovak.net>
 // https://github.com/johnnovak/
