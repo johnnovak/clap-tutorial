@@ -37,7 +37,7 @@ QualifierAlignment: Left
 
 # The extra indent or outdent of class access modifiers, e.g. public:
 #
-AccessModifierOffset: -8
+AccessModifierOffset: -4
 
 # Align parameters on the open bracket
 #
