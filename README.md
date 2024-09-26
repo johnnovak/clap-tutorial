@@ -11,14 +11,18 @@ and vcpkg.
 
 ### Install vcpkg
 
+If you don't have vcpkg installed yet:
+
     git clone https://github.com/microsoft/vcpkg.git
     cd vcpkg && bootstrap-vcpkg.sh
+
+Then append this to your `.bashrc` or `.zshrc`:
 
     export VCPKG_ROOT=<vcpkg_repo_location>
     export PATH=$VCPKG_ROOT:$PATH
 
-These instructions are for Linux and macOS; run `bootstrap-vcpkg.bat` on
-Windows and set the `PATH` Windows enviroment variable accordingly.
+On Windows, run `bootstrap-vcpkg.bat` instead and set the `PATH` Windows
+enviroment variable accordingly.
 
 
 ## Building
