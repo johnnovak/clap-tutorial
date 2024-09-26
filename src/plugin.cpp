@@ -94,7 +94,7 @@ static const clap_plugin_audio_ports_t extension_audio_ports = {
         }
 
         info->id            = 0;
-        info->channel_count = 2;
+        info->channel_count = 2; // always stereo
         info->flags         = CLAP_AUDIO_PORT_IS_MAIN;
         info->port_type     = CLAP_PORT_STEREO;
         info->in_place_pair = CLAP_INVALID_ID;

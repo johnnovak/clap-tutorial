@@ -14,6 +14,29 @@
 
 #include "my_plugin.h"
 
+// Unsigned-only integer division with ceiling
+template<typename T1, typename T2>
+inline constexpr T1 ceil_udivide(const T1 x, const T2 y) noexcept {
+	static_assert(std::is_unsigned<T1>::value, "First parameter should be unsigned");
+	static_assert(std::is_unsigned<T2>::value, "Second parameter should be unsigned");
+	return (x != 0) ? 1 + ((x - 1) / y) : 0;
+	// https://stackoverflow.com/a/2745086
+}
+
+static spx_uint32_t estimate_max_out_frames(SpeexResamplerState* resampler,
+                                            const spx_uint32_t in_frames)
+{
+	assert(resampler);
+	assert(in_frames);
+
+	spx_uint32_t ratio_num = 0;
+	spx_uint32_t ratio_den = 0;
+	speex_resampler_get_ratio(resampler, &ratio_num, &ratio_den);
+	assert(ratio_num && ratio_den);
+
+	return ceil_udivide(in_frames * ratio_den, ratio_num);
+}
+
 MyPlugin::MyPlugin(const clap_plugin_t _plugin_class, const clap_host_t* _host,
                    const Waveform _waveform)
 {
@@ -36,8 +59,8 @@ bool MyPlugin::Init(const clap_plugin* _plugin_instance)
     for (uint32_t i = 0; i < NumParams; ++i) {
         clap_param_info_t info = {};
 
-        auto extension_params = (clap_plugin_params_t*)plugin_class.get_extension(
-            plugin_instance, CLAP_EXT_PARAMS);
+        auto extension_params = reinterpret_cast<const clap_plugin_params_t*>(
+            plugin_class.get_extension(plugin_instance, CLAP_EXT_PARAMS));
 
         extension_params->get_info(&plugin_class, i, &info);
 
@@ -51,12 +74,31 @@ bool MyPlugin::Init(const clap_plugin* _plugin_instance)
 void MyPlugin::Shutdown()
 {
     std::lock_guard lock(sync_params);
+
+	if (resampler) {
+		speex_resampler_destroy(resampler);
+		resampler = nullptr;
+	}
 }
 
-bool MyPlugin::Activate(const double _sample_rate, const uint32_t min_frame_count,
+bool MyPlugin::Activate(const double sample_rate, const uint32_t min_frame_count,
                         const uint32_t max_frame_count)
 {
-    sample_rate = _sample_rate;
+    output_sample_rate_hz = sample_rate;
+
+    const spx_uint32_t in_rate_hz  = static_cast<int>(RenderSampleRateHz);
+    const spx_uint32_t out_rate_hz = static_cast<int>(output_sample_rate_hz);
+
+    constexpr auto NumChannels     = 2; // always stereo
+    constexpr auto ResampleQuality = SPEEX_RESAMPLER_QUALITY_DESKTOP;
+
+    resampler = speex_resampler_init(
+        NumChannels, in_rate_hz, out_rate_hz, ResampleQuality, nullptr);
+
+    speex_resampler_set_rate(resampler, in_rate_hz, out_rate_hz);
+	speex_resampler_reset_mem(resampler);
+	speex_resampler_skip_zeros(resampler);
+
     return true;
 }
 
@@ -65,20 +107,20 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
     assert(process->audio_outputs_count == 1);
     assert(process->audio_inputs_count == 0);
 
-    const uint32_t frame_count = process->frames_count;
-    const uint32_t input_event_count = process->in_events->size(process->in_events);
+    const uint32_t num_frames = process->frames_count;
+    const uint32_t num_events = process->in_events->size(process->in_events);
 
     uint32_t event_index      = 0;
-    uint32_t next_event_frame = input_event_count ? 0 : frame_count;
+    uint32_t next_event_frame = (num_events > 0) ? 0 : num_frames;
 
     SyncMainParamsToAudio(process->out_events);
 
-    for (uint32_t i = 0; i < frame_count;) {
-        while (event_index < input_event_count && next_event_frame == i) {
-            const clap_event_header_t* event =
-                process->in_events->get(process->in_events, event_index);
+    for (uint32_t curr_frame = 0; curr_frame < num_frames;) {
+        while (event_index < num_events && next_event_frame == curr_frame) {
 
-            if (event->time != i) {
+            const auto event = process->in_events->get(process->in_events,
+                                                       event_index);
+            if (event->time != curr_frame) {
                 next_event_frame = event->time;
                 break;
             }
@@ -86,18 +128,23 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
             ProcessEvent(event);
             ++event_index;
 
-            if (event_index == input_event_count) {
-                next_event_frame = frame_count;
+            if (event_index == num_events) {
+				// We've reached the end of the event list
+                next_event_frame = num_frames;
                 break;
             }
         }
 
-        RenderAudio(i,
-                    next_event_frame,
+        const auto start_pos = curr_frame;
+        const auto end_pos   = next_event_frame;
+
+		// Render samples until the next event
+        RenderAudio(start_pos,
+                    end_pos,
                     process->audio_outputs[0].data32[0],
                     process->audio_outputs[0].data32[1]);
 
-        i = next_event_frame;
+        curr_frame = next_event_frame;
     }
 
     for (size_t i = 0; i < voices.size(); ++i) {
@@ -105,13 +152,11 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
 
         if (!voice->held) {
             clap_event_note_t event = {
-                .header = {
-                    .size     = sizeof(event),
-                    .time     = 0,
-                    .space_id = CLAP_CORE_EVENT_SPACE_ID,
-                    .type     = CLAP_EVENT_NOTE_END,
-                    .flags    = 0
-                },
+                .header     = {.size     = sizeof(event),
+                               .time     = 0,
+                               .space_id = CLAP_CORE_EVENT_SPACE_ID,
+                               .type     = CLAP_EVENT_NOTE_END,
+                               .flags    = 0},
                 .key        = voice->key,
                 .note_id    = voice->note_id,
                 .channel    = voice->channel,
@@ -157,7 +202,7 @@ bool MyPlugin::GetParamInfo(const uint32_t index, clap_param_info_t* info)
 
 std::optional<double> MyPlugin::GetParamValue(const clap_id id)
 {
-    uint32_t i = (uint32_t)id;
+    uint32_t i = id;
     if (i >= NumParams) {
         return {};
     }
@@ -182,7 +227,7 @@ std::optional<double> MyPlugin::GetParamValue(const clap_id id)
 bool MyPlugin::ParamValueToText(const clap_id id, const double value,
                                 char* display, const uint32_t size)
 {
-    uint32_t i = (uint32_t)id;
+    uint32_t i = id;
     if (i >= MyPlugin::NumParams) {
         return false;
     }
@@ -229,6 +274,7 @@ bool MyPlugin::SaveState(const clap_ostream_t* stream)
 
     return (bytes_written == bytes_to_write);
 }
+
 void MyPlugin::Flush(const clap_input_events_t* in, const clap_output_events_t* out)
 {
     const uint32_t num_events = in->size(in);
@@ -247,19 +293,21 @@ void MyPlugin::ProcessEvent(const clap_event_header_t* event)
 {
     if (event->space_id == CLAP_CORE_EVENT_SPACE_ID) {
 
-        if (event->type == CLAP_EVENT_NOTE_ON || event->type == CLAP_EVENT_NOTE_OFF ||
-            event->type == CLAP_EVENT_NOTE_CHOKE) {
-
-            const auto note_event = (const clap_event_note_t*)event;
+        switch (event->type) {
+        case CLAP_EVENT_NOTE_ON:
+        case CLAP_EVENT_NOTE_OFF:
+        case CLAP_EVENT_NOTE_CHOKE: {
+            const auto note_event = reinterpret_cast<const clap_event_note_t*>(event);
 
             // Look through our voices array, and if the event
             // matches any of them, it must have been released.
             for (size_t i = 0; i < voices.size(); ++i) {
                 auto voice = &voices[i];
 
-                if ((note_event->key     == -1 || voice->key     == note_event->key) &&
+                if ((note_event->key == -1 || voice->key == note_event->key) &&
                     (note_event->note_id == -1 || voice->note_id == note_event->note_id) &&
-                    (note_event->channel == -1 || voice->channel == note_event->channel)) {
+                    (note_event->channel == -1 ||
+                     voice->channel == note_event->channel)) {
 
                     if (event->type == CLAP_EVENT_NOTE_CHOKE) {
                         // Stop the voice immediately; don't process the
@@ -275,40 +323,71 @@ void MyPlugin::ProcessEvent(const clap_event_header_t* event)
             // If this is a note on event, create a new voice
             // and add it to our vector.
             if (event->type == CLAP_EVENT_NOTE_ON) {
-                Voice voice = {
-                    .held    = true,
-                    .note_id = note_event->note_id,
-                    .channel = note_event->channel,
-                    .key     = note_event->key,
-                    .phase   = 0.0f
-                };
+                Voice voice = {.held    = true,
+                               .note_id = note_event->note_id,
+                               .channel = note_event->channel,
+                               .key     = note_event->key,
+                               .phase   = 0.0f};
 
                 voices.emplace_back(voice);
             }
+        } break;
 
-        } else if (event->type == CLAP_EVENT_PARAM_VALUE) {
-            const auto value_event = (const clap_event_param_value_t*)event;
-            uint32_t i             = (uint32_t)value_event->param_id;
+        case CLAP_EVENT_NOTE_EXPRESSION: {
+            [[maybe_unused]] const auto note_expression_event =
+                reinterpret_cast<const clap_event_note_expression_t*>(event);
+            // TODO
+        } break;
+
+        case CLAP_EVENT_PARAM_VALUE: {
+            const auto value_event =
+                reinterpret_cast<const clap_event_param_value_t*>(event);
+
+            auto i = value_event->param_id;
 
             std::lock_guard lock(sync_params);
 
             audio_params[i]         = value_event->value;
             audio_params_changed[i] = true;
+        } break;
 
-        } else if (event->type == CLAP_EVENT_PARAM_MOD) {
-            const auto mod_event = (const clap_event_param_mod_t*)event;
+        case CLAP_EVENT_PARAM_MOD: {
+            const auto mod_event = reinterpret_cast<const clap_event_param_mod_t*>(event);
 
             for (size_t i = 0; i < voices.size(); ++i) {
                 auto voice = &voices[i];
 
-                if ((mod_event->key     == -1 || voice->key     == mod_event->key) &&
+                if ((mod_event->key == -1 || voice->key == mod_event->key) &&
                     (mod_event->note_id == -1 || voice->note_id == mod_event->note_id) &&
-                    (mod_event->channel == -1 || voice->channel == mod_event->channel)) {
+                    (mod_event->channel == -1 ||
+                     voice->channel == mod_event->channel)) {
 
                     voice->param_offsets[mod_event->param_id] = mod_event->amount;
                     break;
                 }
             }
+        } break;
+
+        case CLAP_EVENT_TRANSPORT: {
+            [[maybe_unused]] const auto transport_event =
+                reinterpret_cast<const clap_event_transport_t*>(event);
+            // TODO
+        } break;
+
+        case CLAP_EVENT_MIDI: {
+            [[maybe_unused]] const auto midi_event = reinterpret_cast<const clap_event_midi_t*>(event);
+            // TODO
+        } break;
+
+        case CLAP_EVENT_MIDI_SYSEX: {
+            [[maybe_unused]] const auto sysex_event = reinterpret_cast<const clap_event_midi_sysex*>(event);
+            // TODO
+        } break;
+
+        case CLAP_EVENT_MIDI2: {
+            [[maybe_unused]] const auto midi2_event = reinterpret_cast<const clap_event_midi2*>(event);
+            // TODO
+        } break;
         }
     }
 }
@@ -327,10 +406,10 @@ static float triangle(const float x)
     return (A / P) * (P - fabs(fmod(x - PhaseOffset, 2.0f * P) - P)) - AmplitudeOffset;
 }
 
-void MyPlugin::RenderAudio(const uint32_t start, const uint32_t end,
+void MyPlugin::RenderAudio(const uint32_t start_pos, const uint32_t end_pos,
                            float* out_left, float* out_right)
 {
-    for (uint32_t index = start; index < end; ++index) {
+    for (uint32_t pos = start_pos; pos < end_pos; ++pos) {
         auto sum = 0.0f;
 
         for (size_t i = 0; i < voices.size(); ++i) {
@@ -356,12 +435,12 @@ void MyPlugin::RenderAudio(const uint32_t start, const uint32_t end,
             default: assert(false);
             }
 
-            voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) / sample_rate;
+            voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) / output_sample_rate_hz;
             voice->phase -= floorf(voice->phase);
         }
 
-        out_left[index]  = sum;
-        out_right[index] = sum;
+        out_left[pos]  = sum;
+        out_right[pos] = sum;
     }
 }
 

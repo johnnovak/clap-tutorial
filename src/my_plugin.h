@@ -14,11 +14,12 @@
 #include <vector>
 
 #include "clap/clap.h"
+#include "speex/speex_resampler.h"
 
 class MyPlugin {
 
 public:
-	enum Waveform { Sine, Triangle };
+    enum Waveform { Sine, Triangle };
 
 public:
     // Init/shutdown
@@ -62,6 +63,8 @@ private:
     bool SyncAudioParamsToMain();
 
 private:
+    static constexpr auto RenderSampleRateHz = 16789.0;
+
     static constexpr auto ParamVolume = 0;
     static constexpr auto NumParams   = 1;
 
@@ -79,11 +82,13 @@ private:
     const clap_host_t* host            = nullptr;
     const clap_plugin* plugin_instance = nullptr;
 
-    float sample_rate = 48'000.0f;
+    double output_sample_rate_hz = 0.0;
 
-	Waveform waveform = {};
+    Waveform waveform = {};
 
     std::vector<Voice> voices = {};
+
+    SpeexResamplerState* resampler = nullptr;
 
     // for the audio thread
     float audio_params[NumParams]        = {};
