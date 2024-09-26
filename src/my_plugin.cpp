@@ -99,6 +99,13 @@ bool MyPlugin::Activate(const double sample_rate, const uint32_t min_frame_count
 	speex_resampler_reset_mem(resampler);
 	speex_resampler_skip_zeros(resampler);
 
+    const auto max_resample_buf_size = static_cast<uint32_t>(
+        std::ceil(static_cast<double>(max_frame_count) *
+                  (RenderSampleRateHz / output_sample_rate_hz)));
+
+	resample_buf[0].resize(max_resample_buf_size);
+	resample_buf[1].resize(max_resample_buf_size);
+
     return true;
 }
 
@@ -114,6 +121,11 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
     uint32_t next_event_frame = (num_events > 0) ? 0 : num_frames;
 
     SyncMainParamsToAudio(process->out_events);
+
+	const auto resample_ratio = (RenderSampleRateHz / output_sample_rate_hz);
+
+	resample_buf[0].clear();
+	resample_buf[1].clear();
 
     for (uint32_t curr_frame = 0; curr_frame < num_frames;) {
         while (event_index < num_events && next_event_frame == curr_frame) {
@@ -135,17 +147,32 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
             }
         }
 
-        const auto start_pos = curr_frame;
-        const auto end_pos   = next_event_frame;
+        const auto render_frame_count = static_cast<uint32_t>(std::round(
+            static_cast<double>(next_event_frame - curr_frame) * resample_ratio));
 
-		// Render samples until the next event
-        RenderAudio(start_pos,
-                    end_pos,
-                    process->audio_outputs[0].data32[0],
-                    process->audio_outputs[0].data32[1]);
+        // Render samples until the next event
+        RenderAudio(render_frame_count);
 
         curr_frame = next_event_frame;
     }
+
+    spx_uint32_t in_len  = resample_buf[0].size();
+    spx_uint32_t out_len = num_frames;
+    speex_resampler_process_float(resampler,
+                                  0,
+                                  resample_buf[0].data(),
+                                  &in_len,
+                                  process->audio_outputs[0].data32[0],
+                                  &out_len);
+
+    in_len  = resample_buf[1].size();
+    out_len = num_frames;
+    speex_resampler_process_float(resampler,
+                                  1,
+                                  resample_buf[1].data(),
+                                  &in_len,
+                                  process->audio_outputs[0].data32[1],
+                                  &out_len);
 
     for (size_t i = 0; i < voices.size(); ++i) {
         auto voice = &voices[i];
@@ -406,10 +433,9 @@ static float triangle(const float x)
     return (A / P) * (P - fabs(fmod(x - PhaseOffset, 2.0f * P) - P)) - AmplitudeOffset;
 }
 
-void MyPlugin::RenderAudio(const uint32_t start_pos, const uint32_t end_pos,
-                           float* out_left, float* out_right)
+void MyPlugin::RenderAudio(const uint32_t num_frames)
 {
-    for (uint32_t pos = start_pos; pos < end_pos; ++pos) {
+    for (size_t frame = 0; frame < num_frames; ++frame) {
         auto sum = 0.0f;
 
         for (size_t i = 0; i < voices.size(); ++i) {
@@ -435,12 +461,12 @@ void MyPlugin::RenderAudio(const uint32_t start_pos, const uint32_t end_pos,
             default: assert(false);
             }
 
-            voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) / output_sample_rate_hz;
+            voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) / RenderSampleRateHz;
             voice->phase -= floorf(voice->phase);
         }
 
-        out_left[pos]  = sum;
-        out_right[pos] = sum;
+        resample_buf[0].emplace_back(sum);
+        resample_buf[1].emplace_back(sum);
     }
 }
 

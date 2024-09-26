@@ -9,6 +9,7 @@
 // Adjusted for C++20 by John Novak <john@johnnovak.net>
 // https://github.com/johnnovak/
 
+#include <array>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -56,8 +57,7 @@ public:
 private:
     void ProcessEvent(const clap_event_header_t* event);
 
-    void RenderAudio(const uint32_t start, const uint32_t end, float* out_left,
-                     float* out_right);
+    void RenderAudio(const uint32_t num_frames);
 
     void SyncMainParamsToAudio(const clap_output_events_t* out);
     bool SyncAudioParamsToMain();
@@ -89,6 +89,8 @@ private:
     std::vector<Voice> voices = {};
 
     SpeexResamplerState* resampler = nullptr;
+
+    std::array<std::vector<float>, 2> resample_buf = {};
 
     // for the audio thread
     float audio_params[NumParams]        = {};
