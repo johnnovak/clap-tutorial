@@ -30,7 +30,7 @@ constexpr auto Features = (const char*[]) {
 static const clap_plugin_descriptor_t plugin_descriptor_sine = {
 
     .clap_version = CLAP_VERSION_INIT,
-    .id           = "nakst.HelloClapSine",
+    .id           = "org.nakst.clap-tutorial.HelloClapSine",
     .name         = "HelloCLAP Sine",
     .vendor       = Vendor,
     .url          = Url,
@@ -44,7 +44,7 @@ static const clap_plugin_descriptor_t plugin_descriptor_sine = {
 static const clap_plugin_descriptor_t plugin_descriptor_triangle = {
 
     .clap_version = CLAP_VERSION_INIT,
-    .id           = "nakst.HelloClapTriangle",
+    .id           = "org.nakst.clap-tutorial.HelloClapTriangle",
     .name         = "HelloCLAP Triangle",
     .vendor       = Vendor,
     .url          = Url,
