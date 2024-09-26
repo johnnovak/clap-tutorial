@@ -1,0 +1,2 @@
+constexpr int VersionMajor = @ClapTutorial_VERSION_MAJOR@;
+constexpr int VersionMinor = @ClapTutorial_VERSION_MINOR@;
