@@ -8,6 +8,7 @@
 #   - Speex::SpeexSDP -- The SpeexDSP library, if found.
 #
 # Adapted from: https://github.com/microsoft/vcpkg/issues/37412
+#
 
 set(_VCPKG_ARCH_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 
@@ -37,8 +38,8 @@ endif ()
 add_library(Speex::SpeexDSP STATIC IMPORTED)
 
 set_target_properties(Speex::SpeexDSP PROPERTIES
-    IMPORTED_CONFIGURATIONS "Debug;Release"
-    IMPORTED_LOCATION_RELEASE "${SPEEXDSP_LIB_RELEASE}"
-    IMPORTED_LOCATION_DEBUG "${SPEEXDSP_LIB_DEBUG}"
+    IMPORTED_CONFIGURATIONS       "Debug;Release"
+    IMPORTED_LOCATION_RELEASE     "${SPEEXDSP_LIB_RELEASE}"
+    IMPORTED_LOCATION_DEBUG       "${SPEEXDSP_LIB_DEBUG}"
     INTERFACE_INCLUDE_DIRECTORIES "${SPEEXDSP_INCLUDE_DIR}"
 )
