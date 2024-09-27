@@ -261,14 +261,12 @@ void resample(const int num_resampled_frames)
         printf("  CASE 1: in_len: %u, input_len: %zu\n", in_len, input_len);
 
         if (in_len > 0) {
-            auto remaining = input_len - in_len;
-            printf("    remaining: %zu\n", remaining);
+            printf("    remaining: %zu\n", input_len - in_len);
             // Case 1: The input buffer hasn't been fully consumed; we have
             // leftover input samples that we need to keep for the next
             // Process() call.
             //
             render_buf[0].erase(render_buf[0].begin(), render_buf[0].begin() + in_len);
-
             render_buf[1].erase(render_buf[1].begin(), render_buf[1].begin() + in_len);
         }
 

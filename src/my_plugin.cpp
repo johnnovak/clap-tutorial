@@ -128,11 +128,11 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
             }
         }
 
-        const auto render_frame_count = static_cast<uint32_t>(std::round(
-            static_cast<double>(next_event_frame - curr_frame) * resample_ratio));
+        const auto num_frames_to_render = static_cast<int>(
+            static_cast<double>(next_event_frame - curr_frame) * resample_ratio);
 
         // Render samples until the next event
-        RenderAudio(render_frame_count);
+        RenderAudio(num_frames_to_render);
 
         curr_frame = next_event_frame;
     }
@@ -143,6 +143,7 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
 
     spx_uint32_t in_len  = input_len;
     spx_uint32_t out_len = output_len;
+
     speex_resampler_process_float(resampler,
                                   0,
                                   render_buf[0].data(),
@@ -152,6 +153,7 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
 
     in_len  = input_len;
     out_len = output_len;
+
     speex_resampler_process_float(resampler,
                                   1,
                                   render_buf[1].data(),
@@ -179,11 +181,8 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
         const auto curr_out_pos             = out_len;
 
         // "It's the only way to be sure"
-        const auto extra_frames = 5;
-
-        const auto render_frame_count = static_cast<uint32_t>(
-            std::ceil(static_cast<double>(num_out_frames_remaining) * resample_ratio) +
-            extra_frames);
+        const auto render_frame_count = static_cast<int>(std::ceil(
+            static_cast<double>(num_out_frames_remaining) * resample_ratio));
 
         render_buf[0].clear();
         render_buf[1].clear();
@@ -216,11 +215,10 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
         // leftover input samples that we need to keep for the next Process()
         // call.
         //
-        render_buf[0].erase(render_buf[0].begin(),
-                            render_buf[0].begin() + in_len - 1);
-
-        render_buf[1].erase(render_buf[1].begin(),
-                            render_buf[1].begin() + in_len - 1);
+        if (in_len > 0) {
+            render_buf[0].erase(render_buf[0].begin(), render_buf[0].begin() + in_len);
+            render_buf[1].erase(render_buf[1].begin(), render_buf[1].begin() + in_len);
+        }
 
     } else {
         // Case 3: All input samples have been consumed and the output buffer
