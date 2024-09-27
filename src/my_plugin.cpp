@@ -23,20 +23,6 @@ inline constexpr T1 ceil_udivide(const T1 x, const T2 y) noexcept {
 	// https://stackoverflow.com/a/2745086
 }
 
-static spx_uint32_t estimate_max_out_frames(SpeexResamplerState* resampler,
-                                            const spx_uint32_t in_frames)
-{
-	assert(resampler);
-	assert(in_frames);
-
-	spx_uint32_t ratio_num = 0;
-	spx_uint32_t ratio_den = 0;
-	speex_resampler_get_ratio(resampler, &ratio_num, &ratio_den);
-	assert(ratio_num && ratio_den);
-
-	return ceil_udivide(in_frames * ratio_den, ratio_num);
-}
-
 MyPlugin::MyPlugin(const clap_plugin_t _plugin_class, const clap_host_t* _host,
                    const Waveform _waveform)
 {
@@ -85,6 +71,7 @@ bool MyPlugin::Activate(const double sample_rate, const uint32_t min_frame_count
                         const uint32_t max_frame_count)
 {
     output_sample_rate_hz = sample_rate;
+	resample_ratio = RenderSampleRateHz / output_sample_rate_hz;
 
     const spx_uint32_t in_rate_hz  = static_cast<int>(RenderSampleRateHz);
     const spx_uint32_t out_rate_hz = static_cast<int>(output_sample_rate_hz);
@@ -99,12 +86,11 @@ bool MyPlugin::Activate(const double sample_rate, const uint32_t min_frame_count
 	speex_resampler_reset_mem(resampler);
 	speex_resampler_skip_zeros(resampler);
 
-    const auto max_resample_buf_size = static_cast<uint32_t>(
-        std::ceil(static_cast<double>(max_frame_count) *
-                  (RenderSampleRateHz / output_sample_rate_hz)));
+    const auto max_render_buf_size = static_cast<size_t>(
+        static_cast<double>(max_frame_count) * resample_ratio * 1.10f);
 
-	resample_buf[0].resize(max_resample_buf_size);
-	resample_buf[1].resize(max_resample_buf_size);
+    render_buf[0].resize(max_render_buf_size);
+	render_buf[1].resize(max_render_buf_size);
 
     return true;
 }
@@ -118,14 +104,9 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
     const uint32_t num_events = process->in_events->size(process->in_events);
 
     uint32_t event_index      = 0;
-    uint32_t next_event_frame = (num_events > 0) ? 0 : num_frames;
+    uint32_t next_event_frame = (num_events == 0) ? num_frames : 0;
 
     SyncMainParamsToAudio(process->out_events);
-
-	const auto resample_ratio = (RenderSampleRateHz / output_sample_rate_hz);
-
-	resample_buf[0].clear();
-	resample_buf[1].clear();
 
     for (uint32_t curr_frame = 0; curr_frame < num_frames;) {
         while (event_index < num_events && next_event_frame == curr_frame) {
@@ -141,7 +122,7 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
             ++event_index;
 
             if (event_index == num_events) {
-				// We've reached the end of the event list
+                // We've reached the end of the event list
                 next_event_frame = num_frames;
                 break;
             }
@@ -156,24 +137,100 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
         curr_frame = next_event_frame;
     }
 
-    spx_uint32_t in_len  = resample_buf[0].size();
-    spx_uint32_t out_len = num_frames;
+    // Resample
+    const auto input_len  = render_buf[0].size();
+    const auto output_len = num_frames;
+
+    spx_uint32_t in_len  = input_len;
+    spx_uint32_t out_len = output_len;
     speex_resampler_process_float(resampler,
                                   0,
-                                  resample_buf[0].data(),
+                                  render_buf[0].data(),
                                   &in_len,
                                   process->audio_outputs[0].data32[0],
                                   &out_len);
 
-    in_len  = resample_buf[1].size();
-    out_len = num_frames;
+    in_len  = input_len;
+    out_len = output_len;
     speex_resampler_process_float(resampler,
                                   1,
-                                  resample_buf[1].data(),
+                                  render_buf[1].data(),
                                   &in_len,
                                   process->audio_outputs[0].data32[1],
                                   &out_len);
 
+    // Speex returns the number actually consumed and written samples in
+    // `in_len` and `out_len`, respectively. There are three outcomes:
+    //
+    // 1) The input buffer hasn't been fully consumed, but the output buffer
+    //    has been completely filled.
+    //
+    // 2) The output buffer hasn't been filled completely, but all input
+    //    samples have been consumed.
+    //
+    // 3) All input samples have been consumed and the output buffer has been
+    //    completely filled.
+    //
+    if (out_len < output_len) {
+        // Case 2: The output buffer hasn't been filled completely; we need to
+        // generate more input samples.
+        //
+        const auto num_out_frames_remaining = output_len - out_len;
+        const auto curr_out_pos             = out_len;
+
+        // "It's the only way to be sure"
+        const auto extra_frames = 5;
+
+        const auto render_frame_count = static_cast<uint32_t>(
+            std::ceil(static_cast<double>(num_out_frames_remaining) * resample_ratio) +
+            extra_frames);
+
+        render_buf[0].clear();
+        render_buf[1].clear();
+
+        RenderAudio(render_frame_count);
+
+        in_len  = render_buf[0].size();
+        out_len = num_out_frames_remaining;
+
+        speex_resampler_process_float(resampler,
+                                      0,
+                                      render_buf[0].data(),
+                                      &in_len,
+                                      process->audio_outputs[0].data32[0] + curr_out_pos,
+                                      &out_len);
+
+        in_len  = render_buf[1].size();
+        out_len = num_out_frames_remaining;
+
+        speex_resampler_process_float(resampler,
+                                      1,
+                                      render_buf[1].data(),
+                                      &in_len,
+                                      process->audio_outputs[0].data32[1] + curr_out_pos,
+                                      &out_len);
+    }
+
+    if (in_len < input_len) {
+        // Case 1: The input buffer hasn't been fully consumed; we have
+        // leftover input samples that we need to keep for the next Process()
+        // call.
+        //
+        render_buf[0].erase(render_buf[0].begin(),
+                            render_buf[0].begin() + in_len - 1);
+
+        render_buf[1].erase(render_buf[1].begin(),
+                            render_buf[1].begin() + in_len - 1);
+
+    } else {
+        // Case 3: All input samples have been consumed and the output buffer
+        // has been completely filled.
+        //
+        render_buf[0].clear();
+        render_buf[1].clear();
+    }
+
+    // Clear voices
     for (size_t i = 0; i < voices.size(); ++i) {
         auto voice = &voices[i];
 
@@ -465,8 +522,8 @@ void MyPlugin::RenderAudio(const uint32_t num_frames)
             voice->phase -= floorf(voice->phase);
         }
 
-        resample_buf[0].emplace_back(sum);
-        resample_buf[1].emplace_back(sum);
+        render_buf[0].emplace_back(sum);
+        render_buf[1].emplace_back(sum);
     }
 }
 

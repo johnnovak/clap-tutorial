@@ -82,15 +82,16 @@ private:
     const clap_host_t* host            = nullptr;
     const clap_plugin* plugin_instance = nullptr;
 
-    double output_sample_rate_hz = 0.0;
-
     Waveform waveform = {};
 
     std::vector<Voice> voices = {};
 
-    SpeexResamplerState* resampler = nullptr;
+    double output_sample_rate_hz = 0.0;
 
-    std::array<std::vector<float>, 2> resample_buf = {};
+    std::array<std::vector<float>, 2> render_buf = {};
+
+    SpeexResamplerState* resampler = nullptr;
+    double resample_ratio          = 0.0f;
 
     // for the audio thread
     float audio_params[NumParams]        = {};
