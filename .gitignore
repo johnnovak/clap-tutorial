@@ -39,3 +39,6 @@ GTAGS
 .clangd
 .cache
 compile_commands.json
+
+*.wav
+
