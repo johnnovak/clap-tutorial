@@ -14,15 +14,6 @@
 
 #include "my_plugin.h"
 
-// Unsigned-only integer division with ceiling
-template<typename T1, typename T2>
-inline constexpr T1 ceil_udivide(const T1 x, const T2 y) noexcept {
-	static_assert(std::is_unsigned<T1>::value, "First parameter should be unsigned");
-	static_assert(std::is_unsigned<T2>::value, "Second parameter should be unsigned");
-	return (x != 0) ? 1 + ((x - 1) / y) : 0;
-	// https://stackoverflow.com/a/2745086
-}
-
 MyPlugin::MyPlugin(const clap_plugin_t _plugin_class, const clap_host_t* _host,
                    const Waveform _waveform)
 {
@@ -61,17 +52,19 @@ void MyPlugin::Shutdown()
 {
     std::lock_guard lock(sync_params);
 
-	if (resampler) {
-		speex_resampler_destroy(resampler);
-		resampler = nullptr;
-	}
+    if (resampler) {
+        speex_resampler_destroy(resampler);
+        resampler = nullptr;
+    }
 }
 
 bool MyPlugin::Activate(const double sample_rate, const uint32_t min_frame_count,
                         const uint32_t max_frame_count)
 {
     output_sample_rate_hz = sample_rate;
-	resample_ratio = RenderSampleRateHz / output_sample_rate_hz;
+
+    // Initialise Speex resampler
+    resample_ratio = RenderSampleRateHz / output_sample_rate_hz;
 
     const spx_uint32_t in_rate_hz  = static_cast<int>(RenderSampleRateHz);
     const spx_uint32_t out_rate_hz = static_cast<int>(output_sample_rate_hz);
@@ -83,14 +76,13 @@ bool MyPlugin::Activate(const double sample_rate, const uint32_t min_frame_count
         NumChannels, in_rate_hz, out_rate_hz, ResampleQuality, nullptr);
 
     speex_resampler_set_rate(resampler, in_rate_hz, out_rate_hz);
-	speex_resampler_reset_mem(resampler);
-	speex_resampler_skip_zeros(resampler);
+    speex_resampler_skip_zeros(resampler);
 
     const auto max_render_buf_size = static_cast<size_t>(
         static_cast<double>(max_frame_count) * resample_ratio * 1.10f);
 
     render_buf[0].resize(max_render_buf_size);
-	render_buf[1].resize(max_render_buf_size);
+    render_buf[1].resize(max_render_buf_size);
 
     return true;
 }
@@ -434,7 +426,8 @@ void MyPlugin::ProcessEvent(const clap_event_header_t* event)
         } break;
 
         case CLAP_EVENT_PARAM_MOD: {
-            const auto mod_event = reinterpret_cast<const clap_event_param_mod_t*>(event);
+            const auto mod_event = reinterpret_cast<const clap_event_param_mod_t*>(
+                event);
 
             for (size_t i = 0; i < voices.size(); ++i) {
                 auto voice = &voices[i];
@@ -457,17 +450,20 @@ void MyPlugin::ProcessEvent(const clap_event_header_t* event)
         } break;
 
         case CLAP_EVENT_MIDI: {
-            [[maybe_unused]] const auto midi_event = reinterpret_cast<const clap_event_midi_t*>(event);
+            [[maybe_unused]] const auto midi_event =
+                reinterpret_cast<const clap_event_midi_t*>(event);
             // TODO
         } break;
 
         case CLAP_EVENT_MIDI_SYSEX: {
-            [[maybe_unused]] const auto sysex_event = reinterpret_cast<const clap_event_midi_sysex*>(event);
+            [[maybe_unused]] const auto sysex_event =
+                reinterpret_cast<const clap_event_midi_sysex*>(event);
             // TODO
         } break;
 
         case CLAP_EVENT_MIDI2: {
-            [[maybe_unused]] const auto midi2_event = reinterpret_cast<const clap_event_midi2*>(event);
+            [[maybe_unused]] const auto midi2_event =
+                reinterpret_cast<const clap_event_midi2*>(event);
             // TODO
         } break;
         }
@@ -516,7 +512,9 @@ void MyPlugin::RenderAudio(const uint32_t num_frames)
             default: assert(false);
             }
 
-            voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) / RenderSampleRateHz;
+            voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) /
+                            RenderSampleRateHz;
+
             voice->phase -= floorf(voice->phase);
         }
 
@@ -535,13 +533,11 @@ void MyPlugin::SyncMainParamsToAudio(const clap_output_events_t* out)
             main_params_changed[i] = false;
 
             clap_event_param_value_t event = {
-                .header = {
-                    .size     = sizeof(event),
-                    .time     = 0,
-                    .space_id = CLAP_CORE_EVENT_SPACE_ID,
-                    .type     = CLAP_EVENT_PARAM_VALUE,
-                    .flags    = 0
-                },
+                .header     = {.size     = sizeof(event),
+                               .time     = 0,
+                               .space_id = CLAP_CORE_EVENT_SPACE_ID,
+                               .type     = CLAP_EVENT_PARAM_VALUE,
+                               .flags    = 0},
                 .param_id   = i,
                 .cookie     = nullptr,
                 .note_id    = -1,
