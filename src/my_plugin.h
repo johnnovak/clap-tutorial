@@ -25,7 +25,7 @@ public:
 public:
     // Init/shutdown
     MyPlugin(const clap_plugin_t plugin_class, const clap_host_t* host,
-             const Waveform waveform);
+             const Waveform waveform, const bool resample);
 
     const clap_plugin_t* GetPluginClass();
 
@@ -59,6 +59,9 @@ private:
 
     void RenderAudio(const uint32_t num_frames);
 
+    void ResampleAndPublishFrames(const uint32_t num_out_frames,
+                                  float* out_left, float* out_right);
+
     void SyncMainParamsToAudio(const clap_output_events_t* out);
     bool SyncAudioParamsToMain();
 
@@ -82,10 +85,13 @@ private:
     const clap_host_t* host            = nullptr;
     const clap_plugin* plugin_instance = nullptr;
 
+    bool do_resample = false;
+
     Waveform waveform = {};
 
     std::vector<Voice> voices = {};
 
+    double render_sample_rate_hz = 0.0;
     double output_sample_rate_hz = 0.0;
 
     std::array<std::vector<float>, 2> render_buf = {};

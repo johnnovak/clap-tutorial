@@ -15,11 +15,12 @@
 #include "my_plugin.h"
 
 MyPlugin::MyPlugin(const clap_plugin_t _plugin_class, const clap_host_t* _host,
-                   const Waveform _waveform)
+                   const Waveform _waveform, const bool resample)
 {
     plugin_class = _plugin_class;
     host         = _host;
     waveform     = _waveform;
+    do_resample  = resample;
 
     plugin_class.plugin_data = this;
 }
@@ -63,26 +64,37 @@ bool MyPlugin::Activate(const double sample_rate, const uint32_t min_frame_count
 {
     output_sample_rate_hz = sample_rate;
 
-    // Initialise Speex resampler
-    resample_ratio = RenderSampleRateHz / output_sample_rate_hz;
+    if (do_resample) {
+        render_sample_rate_hz = RenderSampleRateHz;
 
-    const spx_uint32_t in_rate_hz  = static_cast<int>(RenderSampleRateHz);
-    const spx_uint32_t out_rate_hz = static_cast<int>(output_sample_rate_hz);
+        // Initialise Speex resampler
+        resample_ratio = render_sample_rate_hz / output_sample_rate_hz;
 
-    constexpr auto NumChannels     = 2; // always stereo
-    constexpr auto ResampleQuality = SPEEX_RESAMPLER_QUALITY_DESKTOP;
+        const spx_uint32_t in_rate_hz = static_cast<int>(render_sample_rate_hz);
+        const spx_uint32_t out_rate_hz = static_cast<int>(output_sample_rate_hz);
 
-    resampler = speex_resampler_init(
-        NumChannels, in_rate_hz, out_rate_hz, ResampleQuality, nullptr);
+        constexpr auto NumChannels     = 2; // always stereo
+        constexpr auto ResampleQuality = SPEEX_RESAMPLER_QUALITY_DESKTOP;
 
-    speex_resampler_set_rate(resampler, in_rate_hz, out_rate_hz);
-    speex_resampler_skip_zeros(resampler);
+        resampler = speex_resampler_init(
+            NumChannels, in_rate_hz, out_rate_hz, ResampleQuality, nullptr);
 
-    const auto max_render_buf_size = static_cast<size_t>(
-        static_cast<double>(max_frame_count) * resample_ratio * 1.10f);
+        speex_resampler_set_rate(resampler, in_rate_hz, out_rate_hz);
+        speex_resampler_skip_zeros(resampler);
 
-    render_buf[0].resize(max_render_buf_size);
-    render_buf[1].resize(max_render_buf_size);
+        const auto max_render_buf_size = static_cast<size_t>(
+            static_cast<double>(max_frame_count) * resample_ratio * 1.10f);
+
+        render_buf[0].resize(max_render_buf_size);
+        render_buf[1].resize(max_render_buf_size);
+
+    } else {
+        render_sample_rate_hz = output_sample_rate_hz;
+        resample_ratio        = 1.0;
+
+        render_buf[0].resize(max_frame_count);
+        render_buf[1].resize(max_frame_count);
+    }
 
     return true;
 }
@@ -129,95 +141,20 @@ clap_process_status MyPlugin::Process(const clap_process_t* process)
         curr_frame = next_event_frame;
     }
 
-    // Resample
-    const auto input_len  = render_buf[0].size();
-    const auto output_len = num_frames;
+    auto out_left  = process->audio_outputs[0].data32[0];
+    auto out_right = process->audio_outputs[0].data32[1];
 
-    spx_uint32_t in_len  = input_len;
-    spx_uint32_t out_len = output_len;
-
-    speex_resampler_process_float(resampler,
-                                  0,
-                                  render_buf[0].data(),
-                                  &in_len,
-                                  process->audio_outputs[0].data32[0],
-                                  &out_len);
-
-    in_len  = input_len;
-    out_len = output_len;
-
-    speex_resampler_process_float(resampler,
-                                  1,
-                                  render_buf[1].data(),
-                                  &in_len,
-                                  process->audio_outputs[0].data32[1],
-                                  &out_len);
-
-    // Speex returns the number actually consumed and written samples in
-    // `in_len` and `out_len`, respectively. There are three outcomes:
-    //
-    // 1) The input buffer hasn't been fully consumed, but the output buffer
-    //    has been completely filled.
-    //
-    // 2) The output buffer hasn't been filled completely, but all input
-    //    samples have been consumed.
-    //
-    // 3) All input samples have been consumed and the output buffer has been
-    //    completely filled.
-    //
-    if (out_len < output_len) {
-        // Case 2: The output buffer hasn't been filled completely; we need to
-        // generate more input samples.
-        //
-        const auto num_out_frames_remaining = output_len - out_len;
-        const auto curr_out_pos             = out_len;
-
-        // "It's the only way to be sure"
-        const auto render_frame_count = static_cast<int>(std::ceil(
-            static_cast<double>(num_out_frames_remaining) * resample_ratio));
-
-        render_buf[0].clear();
-        render_buf[1].clear();
-
-        RenderAudio(render_frame_count);
-
-        in_len  = render_buf[0].size();
-        out_len = num_out_frames_remaining;
-
-        speex_resampler_process_float(resampler,
-                                      0,
-                                      render_buf[0].data(),
-                                      &in_len,
-                                      process->audio_outputs[0].data32[0] + curr_out_pos,
-                                      &out_len);
-
-        in_len  = render_buf[1].size();
-        out_len = num_out_frames_remaining;
-
-        speex_resampler_process_float(resampler,
-                                      1,
-                                      render_buf[1].data(),
-                                      &in_len,
-                                      process->audio_outputs[0].data32[1] + curr_out_pos,
-                                      &out_len);
-    }
-
-    if (in_len < input_len) {
-        // Case 1: The input buffer hasn't been fully consumed; we have
-        // leftover input samples that we need to keep for the next Process()
-        // call.
-        //
-        if (in_len > 0) {
-            render_buf[0].erase(render_buf[0].begin(), render_buf[0].begin() + in_len);
-            render_buf[1].erase(render_buf[1].begin(), render_buf[1].begin() + in_len);
-        }
+    if (do_resample) {
+        ResampleAndPublishFrames(num_frames, out_left, out_right);
 
     } else {
-        // Case 3: All input samples have been consumed and the output buffer
-        // has been completely filled.
-        //
-        render_buf[0].clear();
-        render_buf[1].clear();
+        for (size_t i = 0; i < num_frames; ++i) {
+            out_left[i]  = render_buf[0][i];
+            out_right[i] = render_buf[1][i];
+
+            render_buf[0].clear();
+            render_buf[1].clear();
+        }
     }
 
     // Clear voices
@@ -513,13 +450,99 @@ void MyPlugin::RenderAudio(const uint32_t num_frames)
             }
 
             voice->phase += 440.0f * exp2f((voice->key - 57.0f) / 12.0f) /
-                            RenderSampleRateHz;
+                            render_sample_rate_hz;
 
             voice->phase -= floorf(voice->phase);
         }
 
         render_buf[0].emplace_back(sum);
         render_buf[1].emplace_back(sum);
+    }
+}
+
+void MyPlugin::ResampleAndPublishFrames(const uint32_t num_out_frames,
+                                        float* out_left, float* out_right)
+{
+    const auto input_len  = render_buf[0].size();
+    const auto output_len = num_out_frames;
+
+    spx_uint32_t in_len  = input_len;
+    spx_uint32_t out_len = output_len;
+
+    speex_resampler_process_float(
+        resampler, 0, render_buf[0].data(), &in_len, out_left, &out_len);
+
+    in_len  = input_len;
+    out_len = output_len;
+
+    speex_resampler_process_float(
+        resampler, 1, render_buf[1].data(), &in_len, out_right, &out_len);
+
+    // Speex returns the number actually consumed and written samples in
+    // `in_len` and `out_len`, respectively. There are three outcomes:
+    //
+    // 1) The input buffer hasn't been fully consumed, but the output buffer
+    //    has been completely filled.
+    //
+    // 2) The output buffer hasn't been filled completely, but all input
+    //    samples have been consumed.
+    //
+    // 3) All input samples have been consumed and the output buffer has been
+    //    completely filled.
+    //
+    if (out_len < output_len) {
+        // Case 2: The output buffer hasn't been filled completely; we need to
+        // generate more input samples.
+        //
+        const auto num_out_frames_remaining = output_len - out_len;
+        const auto curr_out_pos             = out_len;
+
+        // "It's the only way to be sure"
+        const auto render_frame_count = static_cast<int>(std::ceil(
+            static_cast<double>(num_out_frames_remaining) * resample_ratio));
+
+        render_buf[0].clear();
+        render_buf[1].clear();
+
+        RenderAudio(render_frame_count);
+
+        in_len  = render_buf[0].size();
+        out_len = num_out_frames_remaining;
+
+        speex_resampler_process_float(resampler,
+                                      0,
+                                      render_buf[0].data(),
+                                      &in_len,
+                                      out_left + curr_out_pos,
+                                      &out_len);
+
+        in_len  = render_buf[1].size();
+        out_len = num_out_frames_remaining;
+
+        speex_resampler_process_float(resampler,
+                                      1,
+                                      render_buf[1].data(),
+                                      &in_len,
+                                      out_right + curr_out_pos,
+                                      &out_len);
+    }
+
+    if (in_len < input_len) {
+        // Case 1: The input buffer hasn't been fully consumed; we have
+        // leftover input samples that we need to keep for the next Process()
+        // call.
+        //
+        if (in_len > 0) {
+            render_buf[0].erase(render_buf[0].begin(), render_buf[0].begin() + in_len);
+            render_buf[1].erase(render_buf[1].begin(), render_buf[1].begin() + in_len);
+        }
+
+    } else {
+        // Case 3: All input samples have been consumed and the output buffer
+        // has been completely filled.
+        //
+        render_buf[0].clear();
+        render_buf[1].clear();
     }
 }
 
