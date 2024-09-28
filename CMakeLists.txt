@@ -24,14 +24,14 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 # TODO
 #configure_file(config.h.in config.h)
 
+add_executable(ResamplerTest src/resampler_test.cpp)
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # TODO
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 	# TODO add a dedicated test target for this; for now, you'll need to
 	# comment the rest of this branch out to compile the test
-	#    add_executable(ClapTutorial src/resampler_test.cpp)
-
 	add_library(ClapTutorial MODULE src/plugin.cpp src/my_plugin.cpp)
 
     set_target_properties(ClapTutorial PROPERTIES
@@ -66,5 +66,5 @@ endif ()
 
 find_package(SpeexDSP REQUIRED)
 
-target_link_libraries(ClapTutorial PRIVATE Speex::SpeexDSP)
-
+target_link_libraries(ClapTutorial  PRIVATE Speex::SpeexDSP)
+target_link_libraries(ResamplerTest PRIVATE Speex::SpeexDSP)
