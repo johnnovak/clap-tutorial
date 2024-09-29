@@ -26,13 +26,26 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(ResamplerTest src/resampler_test.cpp)
 
+add_library(ClapTutorial MODULE
+	src/nuked-sc55/emu.cpp
+	src/nuked-sc55/lcd.cpp
+	src/nuked-sc55/mcu.cpp
+	src/nuked-sc55/mcu_interrupt.cpp
+	src/nuked-sc55/mcu_opcodes.cpp
+	src/nuked-sc55/mcu_timer.cpp
+	src/nuked-sc55/pcm.cpp
+	src/nuked-sc55/submcu.cpp
+
+	src/my_plugin.cpp
+	src/plugin.cpp
+)
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # TODO
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 	# TODO add a dedicated test target for this; for now, you'll need to
 	# comment the rest of this branch out to compile the test
-	add_library(ClapTutorial MODULE src/plugin.cpp src/my_plugin.cpp)
 
     set_target_properties(ClapTutorial PROPERTIES
         BUNDLE True
