@@ -1,14 +1,14 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <vector>
 
 #include "clap/clap.h"
+#include "nuked-sc55/emu.h"
 #include "speex/speex_resampler.h"
 
 class NukedSc55 {
-    static constexpr double RenderSampleRateHz = 32000;
-
 public:
     // Init/shutdown
     NukedSc55(const clap_plugin_t plugin_class, const clap_host_t* host);
@@ -25,6 +25,8 @@ public:
     clap_process_status Process(const clap_process_t* process);
 
     void Flush(const clap_input_events_t* in, const clap_output_events_t* out);
+
+    void PublishSample(const float left, const float right);
 
     // State handling
     bool LoadState(const clap_istream_t* stream);
@@ -43,7 +45,10 @@ private:
     const clap_host_t* host            = nullptr;
     const clap_plugin* plugin_instance = nullptr;
 
-    double output_sample_rate_hz = RenderSampleRateHz;
+    std::unique_ptr<Emulator> emu = nullptr;
+
+    double render_sample_rate_hz = 0.0;
+    double output_sample_rate_hz = 0.0;
 
     SpeexResamplerState* resampler = nullptr;
     bool do_resample               = false;

@@ -2,11 +2,41 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 #include "nuked_sc55.h"
 
+// TODO get path to plugin
+// https://forums.steinberg.net/t/get-path-to-resources-folder/828223/4
+
+static FILE* logfile = nullptr;
+
+static void log_init()
+{
+    logfile = fopen("/Users/jnovak/nuked-sc55-clap.log", "wb");
+}
+
+static void log(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+
+    vfprintf(logfile, fmt, args);
+    fprintf(logfile, "\n");
+
+    va_end(args);
+}
+
+static void log_shutdown()
+{
+    fclose(logfile);
+}
+
 NukedSc55::NukedSc55(const clap_plugin_t _plugin_class, const clap_host_t* _host)
 {
+    log_init();
+    log("Constructor");
+
     plugin_class = _plugin_class;
     host         = _host;
 
@@ -20,30 +50,76 @@ const clap_plugin_t* NukedSc55::GetPluginClass()
 
 bool NukedSc55::Init(const clap_plugin* _plugin_instance)
 {
+    log("Init");
+
     plugin_instance = _plugin_instance;
     return true;
 }
 
 void NukedSc55::Shutdown()
 {
+    log("Shutdown");
+
     if (resampler) {
         speex_resampler_destroy(resampler);
         resampler = nullptr;
     }
+    log_shutdown();
 }
+
+static void receive_sample(void* userdata, const AudioFrame<int32_t>& in)
+{
+    assert(userdata);
+    auto emu = reinterpret_cast<NukedSc55*>(userdata);
+
+    AudioFrame<float> out = {};
+    Normalize(in, out);
+
+    emu->PublishSample(out.left, out.right);
+}
+
+// TODO mk1 sample rate 32000 Hz
+// TODO mk2 sample rate 33103 Hz
 
 bool NukedSc55::Activate(const double sample_rate, const uint32_t min_frame_count,
                          const uint32_t max_frame_count)
 {
-    if (output_sample_rate_hz != RenderSampleRateHz) {
+    log("Activate");
+
+    emu = std::make_unique<Emulator>();
+
+    const EMU_Options opts = {.enable_lcd = false};
+    if (!emu->Init(opts)) {
+        log("emu->Init failed");
+        return false;
+    }
+
+    std::filesystem::path rom_dir = "/Users/jnovak/Library/Preferences/DOSBox/sc55-roms/sc55-1.21";
+
+    if (!emu->LoadRoms(Romset::MK1, rom_dir)) {
+        log("emu->LoadRoms failed");
+        return false;
+    }
+
+    emu->Reset();
+    emu->GetPCM().disable_oversampling = true;
+    emu->PostSystemReset(EMU_SystemReset::GS_RESET);
+
+    emu->SetSampleCallback(receive_sample, this);
+
+    render_sample_rate_hz = PCM_GetOutputFrequency(emu->GetPCM());
+
+    log("render_sample_rate_hz: %g", render_sample_rate_hz);
+
+    if (output_sample_rate_hz != render_sample_rate_hz) {
         do_resample = true;
 
         output_sample_rate_hz = sample_rate;
 
         // Initialise Speex resampler
-        resample_ratio = RenderSampleRateHz / output_sample_rate_hz;
+        resample_ratio = render_sample_rate_hz / output_sample_rate_hz;
 
-        const spx_uint32_t in_rate_hz = static_cast<int>(RenderSampleRateHz);
+        const spx_uint32_t in_rate_hz = static_cast<int>(render_sample_rate_hz);
         const spx_uint32_t out_rate_hz = static_cast<int>(output_sample_rate_hz);
 
         constexpr auto NumChannels     = 2; // always stereo
@@ -64,12 +140,16 @@ bool NukedSc55::Activate(const double sample_rate, const uint32_t min_frame_coun
     } else {
         do_resample = false;
 
-        output_sample_rate_hz = RenderSampleRateHz;
+        output_sample_rate_hz = render_sample_rate_hz;
         resample_ratio        = 1.0;
 
         render_buf[0].resize(max_frame_count);
         render_buf[1].resize(max_frame_count);
     }
+
+    log("do_resample: %s", do_resample ? "true" : "false");
+    log("output_sample_rate_hz: %g", output_sample_rate_hz);
+    log("resample_ratio: %g", resample_ratio);
 
     return true;
 }
@@ -147,12 +227,20 @@ bool NukedSc55::SaveState(const clap_ostream_t* stream)
 
 void NukedSc55::Flush(const clap_input_events_t* in, const clap_output_events_t* out)
 {
+    log("Flush");
+
     const uint32_t num_events = in->size(in);
 
     // Process events sent to our plugin from the host.
     for (uint32_t event_index = 0; event_index < num_events; ++event_index) {
         ProcessEvent(in->get(in, event_index));
     }
+}
+
+void NukedSc55::PublishSample(const float left, const float right)
+{
+    render_buf[0].emplace_back(left);
+    render_buf[1].emplace_back(right);
 }
 
 void NukedSc55::ProcessEvent(const clap_event_header_t* event)
@@ -163,6 +251,7 @@ void NukedSc55::ProcessEvent(const clap_event_header_t* event)
 
         case CLAP_EVENT_NOTE_ON:
         case CLAP_EVENT_NOTE_OFF: {
+            log("CLAP_EVENT_NOTE_*");
             // "Note On" and "Note Off" MIDI events can be sent either as
             // CLAP_EVENT_NOTE_* or raw CLAP_EVENT_MIDI messages.
             //
@@ -175,19 +264,55 @@ void NukedSc55::ProcessEvent(const clap_event_header_t* event)
             //
             const auto note_event = reinterpret_cast<const clap_event_note_t*>(event);
 
-            // TODO
+            if (note_event->port_index == -1 || note_event->channel == -1 ||
+                note_event->key == -1) {
+                break;
+            }
+
+            const auto status = static_cast<uint8_t>(
+                (CLAP_EVENT_NOTE_OFF ? 0x80 : 0x90) + note_event->channel);
+
+            const auto data1 = static_cast<uint8_t>(note_event->key);
+            const auto data2 = static_cast<uint8_t>(note_event->velocity * 127.0);
+
+            emu->PostMIDI(status);
+            emu->PostMIDI(data1);
+            emu->PostMIDI(data2);
         } break;
 
         case CLAP_EVENT_MIDI: {
-            [[maybe_unused]] const auto midi_event =
-                reinterpret_cast<const clap_event_midi_t*>(event);
-            // TODO
+            const auto midi_event = reinterpret_cast<const clap_event_midi_t*>(event);
+
+            emu->PostMIDI(midi_event->data[0]);
+            emu->PostMIDI(midi_event->data[1]);
+
+            // 3-byte messages
+            switch (const auto status = midi_event->data[0] & 0xf0) {
+            case 0x80: // note off
+            case 0x90: // note on
+            case 0xa0: // poly aftertouch
+            case 0xb0: // control change
+            case 0xe0: // pitch wheel
+                emu->PostMIDI(midi_event->data[2]);
+                log("CLAP_EVENT_MIDI: %02x %02x %02x",
+                    midi_event->data[0],
+                    midi_event->data[1],
+                    midi_event->data[2]);
+                break;
+            default:
+                log("CLAP_EVENT_MIDI: %02x %02x",
+                    midi_event->data[0],
+                    midi_event->data[1]);
+            }
         } break;
 
         case CLAP_EVENT_MIDI_SYSEX: {
-            [[maybe_unused]] const auto sysex_event =
-                reinterpret_cast<const clap_event_midi_sysex*>(event);
-            // TODO
+            const auto sysex_event = reinterpret_cast<const clap_event_midi_sysex*>(
+                event);
+
+            emu->PostMIDI(std::span{sysex_event->buffer, sysex_event->size});
+
+            log("CLAP_EVENT_MIDI_SYSEX, length: %d", sysex_event->size);
         } break;
         }
     }
@@ -195,16 +320,24 @@ void NukedSc55::ProcessEvent(const clap_event_header_t* event)
 
 void NukedSc55::RenderAudio(const uint32_t num_frames)
 {
-    // TODO
-    // render_buf[0].emplace_back(sum);
-    // render_buf[1].emplace_back(sum);
+    log("RenderAudio: num_frames: %d", num_frames);
+
+    const auto start_size = render_buf[0].size();
+
+    while (render_buf[0].size() - start_size < num_frames) {
+        MCU_Step(emu->GetMCU());
+    }
 }
 
 void NukedSc55::ResampleAndPublishFrames(const uint32_t num_out_frames,
                                          float* out_left, float* out_right)
 {
+    log("RenderAndPublishFrames: num_out_frames: %d", num_out_frames);
+
     const auto input_len  = render_buf[0].size();
     const auto output_len = num_out_frames;
+
+    log("  input_len: %d", input_len);
 
     spx_uint32_t in_len  = input_len;
     spx_uint32_t out_len = output_len;

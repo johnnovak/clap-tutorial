@@ -45,9 +45,8 @@ static const clap_plugin_note_ports_t extension_note_ports = {
         }
 
         info->id = 0;
-        // TODO Also support the MIDI dialect.
-        info->supported_dialects = CLAP_NOTE_DIALECT_CLAP;
-        info->preferred_dialect  = CLAP_NOTE_DIALECT_CLAP;
+        info->supported_dialects = CLAP_NOTE_DIALECT_MIDI;
+        info->preferred_dialect  = CLAP_NOTE_DIALECT_MIDI;
 
         snprintf(info->name, sizeof(info->name), "%s", "Note Port");
 
