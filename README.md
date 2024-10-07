@@ -9,7 +9,7 @@ and vcpkg.
 
 - vcpkg
 
-### Install vcpkg
+## Installing vcpkg
 
 If you don't have vcpkg installed yet:
 
@@ -39,11 +39,6 @@ Build the project (output will be in the `build/` subdirectory):
 To clean the `build` directory:
 
     cmake --build build --target clean
-
-
-To nuke all local files on the `.gitignore` list:
-
-    git clean -dfX
 
 
 ## Useful references
