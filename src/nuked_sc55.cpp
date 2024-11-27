@@ -215,13 +215,13 @@ clap_process_status NukedSc55::Process(const clap_process_t* process)
 
 bool NukedSc55::LoadState(const clap_istream_t* stream)
 {
-    // TODO
-    return true;
+    // TODO return true once implemented
+    return false;
 }
 
 bool NukedSc55::SaveState(const clap_ostream_t* stream)
 {
-    // TODO
+    // TODO return actual number of bytes written when implemented
     return 0;
 }
 

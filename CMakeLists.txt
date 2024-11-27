@@ -39,7 +39,8 @@ add_library(NukedSc55Clap MODULE
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    # TODO
+    target_link_options(plugin-minimal PRIVATE /EXPORT:clap_entry)
+    set_target_properties(plugin-minimal PROPERTIES SUFFIX ".clap" PREFIX "")
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 	# TODO add a dedicated test target for this; for now, you'll need to

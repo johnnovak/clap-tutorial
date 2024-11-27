@@ -47,5 +47,3 @@ To clean the `build` directory:
 - [Microsofts's CMake & vcpks tutorial](https://learn.microsoft.com/en-us/vcpkg/get_started/get-started?pivots=shell-cmd)
 - [Tremus's CPLUG – C wrapper for VST3, AUv2, CLAP audio plugin formats](https://github.com/Tremus/CPLUG)
 - [tobanteAudio's C++ CLAP examples](https://github.com/tobanteAudio/clap-examples/tree/main)
-
-
